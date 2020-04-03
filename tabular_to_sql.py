@@ -50,6 +50,8 @@ def read_header(filepath):
 def fix_dtypes(d, sc):
     for col in sc:
         varname = col["Name"]
+        if varname not in d:
+            continue
         if d[varname] in ["-999999999", "##N/A##"]:
             d[varname] = None
         if d[varname]:
@@ -187,7 +189,6 @@ def convert(sourcezip, conn_url, docobj):
         for f in Path(tempdir).glob('*.tab'):
             tablename = f.name.replace(".tab", "")
             if no_data(f):
-                print("Skipping {}".format(tablename))
                 continue
             ins = metadata.tables[tablename].insert()
             with open(f, "r", encoding="utf-8-sig") as f:
