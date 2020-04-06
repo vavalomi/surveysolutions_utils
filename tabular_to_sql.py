@@ -10,7 +10,7 @@ from tqdm import tqdm
 from ssaw.designer import import_questionnaire_json
 
 
-def create_schema(variablenames, variables, roster_id = None):
+def create_schema(variablenames, variables, roster_ids = []):
     ret = []
     for var in variablenames:
         var_val = var.split("__")
@@ -30,7 +30,7 @@ def create_schema(variablenames, variables, roster_id = None):
                 type = DateTime
             else:
                 type = Float
-        elif var == roster_id:
+        elif var in roster_ids:
             type = Integer
         else:
             type = String
@@ -39,7 +39,6 @@ def create_schema(variablenames, variables, roster_id = None):
 
 def create_table(tablename, schema, keys, metadata):
     columns = [Column(col["Name"], col["Type"]) for col in schema]
-
     _ = Table(tablename, metadata, *columns,
               PrimaryKeyConstraint(*keys, name=tablename + '_pk'))
 
@@ -173,13 +172,14 @@ def convert(sourcezip, conn_url, docobj):
                 keys = TABLES[tablename]["keys"]
             else:
                 columns = read_header(f)
-                keys = ["interview__id",]
-                roster_id = tablename + "__id" 
-                if roster_id in columns:
-                    keys = keys + [roster_id,]
-                else:
-                    roster_id = None
-                sc = create_schema(columns, variables, roster_id)
+                keys = []
+                roster_ids = []
+                for var in columns:
+                    if "__id" in var:
+                        keys.append(var)
+                        if var != "interview__id":
+                            roster_ids.append(var)
+                sc = create_schema(columns, variables, roster_ids)
                 TABLES[tablename] = {"schema": sc, "keys": keys}
             create_table(tablename, sc, keys, metadata)
         
