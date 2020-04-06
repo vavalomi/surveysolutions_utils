@@ -49,13 +49,15 @@ def process_args():
     return parser.parse_args()
 
 def get_questionnaire(client):
-    qlist= client.questionnaires()
-    c_qlist = len(qlist)
-    for i in range(c_qlist):
-        print("[{i}] {title}, version {version}".format(i=i+1, title=qlist[i].title, version=qlist[i].version))
+    qlist = []
+    i = 0
+    for q in client.questionnaires.get_list():
+        i += 1
+        print("[{i}] {title}, version {version}".format(i=i, title=q.title, version=q.version))
+        qlist.append(q)
 
     print()
-    msg = "Pick a number between 1 and {} to download questionnaire, 'q' to exit: ".format(c_qlist)
+    msg = "Pick a number between 1 and {} to download questionnaire, 'q' to exit: ".format(i)
     while True:
         choice = input(msg)
         if choice == "q":
@@ -64,7 +66,7 @@ def get_questionnaire(client):
             choice = int(choice)
         except:
             continue
-        if 1 <= choice <= c_qlist:
+        if 1 <= choice <= i:
             break
     return qlist[choice-1]
 
@@ -73,7 +75,6 @@ if __name__ == "__main__":
 
     from ssaw.headquarters import Headquarters
 
-    print(args.password)
     client = Headquarters(args.url, args.username, args.password)
     if args.qid is None:
         q = get_questionnaire(client)
