@@ -1,50 +1,55 @@
 import argparse
+import os
 import zipfile
 from tempfile import TemporaryDirectory
 from pathlib import Path
+import json
 import csv
 from datetime import datetime
 from sqlalchemy import create_engine, MetaData, Table, PrimaryKeyConstraint, Column, Integer, String, Float, Date, Time, DateTime
 from tqdm import tqdm
 
-from ssaw.designer import import_questionnaire_json
+from ssaw.models import Questionnaire
+from ssaw.utils import get_variables
 
 
-def create_schema(variablenames, variables, roster_ids = []):
+def create_schema(variablenames, variables, roster_ids=[]):
     ret = []
     for var in variablenames:
-        var_val = var.split("__")
-        if var_val[0] in variables:
-            t = variables[var_val[0]]._Type
-        else:
-            t = "TextQuestion"
-        if t in ['SingleQuestion', 'MultyOptionsQuestion']:
-            type = Integer
-        elif t == "NumericQuestion":
-            if variables[var].IsInteger:
-                type =  Integer
-            else:
-                type = Float
-        elif t == "GpsCoordinateQuestion":
-            if var_val[1] == "Timestamp":
-                type = DateTime
-            else:
-                type = Float
-        elif var in roster_ids:
+        if var == "sssys_irnd":
+            type = Float
+        elif var in ["has__errors", "interview__status", "assignment__id"]:
             type = Integer
         else:
-            type = String
+            var_val = var.split("__")
+            t = variables[var_val[0]]._Type if var_val[0] in variables else "TextQuestion"
+            if (
+                t in ['SingleQuestion', 'MultyOptionsQuestion']
+                or t != "NumericQuestion"
+                and t != "GpsCoordinateQuestion"
+                and var in roster_ids
+            ):
+                type = Integer
+            elif t == "NumericQuestion":
+                type = Integer if variables[var].IsInteger else Float
+            elif t == "GpsCoordinateQuestion":
+                type = DateTime if var_val[1] == "Timestamp" else Float
+            else:
+                type = String
         ret.append({"Name": var, "Type": type})
     return ret
+
 
 def create_table(tablename, schema, keys, metadata):
     columns = [Column(col["Name"], col["Type"]) for col in schema]
     _ = Table(tablename, metadata, *columns,
               PrimaryKeyConstraint(*keys, name=tablename + '_pk'))
 
+
 def read_header(filepath):
     with open(filepath, "r", encoding="utf-8-sig") as f:
         return f.readline().replace("\n", "").split("\t")
+
 
 def fix_dtypes(d, sc):
     for col in sc:
@@ -68,9 +73,10 @@ def fix_dtypes(d, sc):
             d[varname] = None
     return d
 
+
 TABLES = {
     "assignment__actions": {
-        "schema":[
+        "schema": [
             {"Name": "assignment__id", "Type": Integer},
             {"Name": "date", "Type": Date},
             {"Name": "time", "Type": Time},
@@ -83,10 +89,10 @@ TABLES = {
             {"Name": "new__value", "Type": String},
             {"Name": "comment", "Type": String}
         ],
-        "keys":["assignment__id", "date", "time", "action"]
+        "keys": ["assignment__id", "date", "time", "action"]
     },
     "interview__actions": {
-        "schema":[
+        "schema": [
             {"Name": "interview__key", "Type": String},
             {"Name": "interview__id", "Type": String},
             {"Name": "date", "Type": Date},
@@ -97,10 +103,10 @@ TABLES = {
             {"Name": "responsible__name", "Type": String},
             {"Name": "responsible__role", "Type": Integer},
         ],
-        "keys":[]
+        "keys": []
     },
     "interview__comments": {
-        "schema":[
+        "schema": [
             {"Name": "interview__key", "Type": String},
             {"Name": "interview__id", "Type": String},
             {"Name": "roster", "Type": String},
@@ -113,10 +119,10 @@ TABLES = {
             {"Name": "role", "Type": Integer},
             {"Name": "comment", "Type": String},
         ],
-        "keys":[]
+        "keys": []
     },
     "interview__diagnostics": {
-        "schema":[
+        "schema": [
             {"Name": "interview__key", "Type": String},
             {"Name": "interview__id", "Type": String},
             {"Name": "interview__status", "Type": Integer},
@@ -129,10 +135,10 @@ TABLES = {
             {"Name": "questions__comments", "Type": Integer},
             {"Name": "interview__duration", "Type": String},
         ],
-        "keys":[]
+        "keys": []
     },
     "interview__errors": {
-        "schema":[
+        "schema": [
             {"Name": "interview__key", "Type": String},
             {"Name": "interview__id", "Type": String},
             {"Name": "roster", "Type": String},
@@ -142,29 +148,39 @@ TABLES = {
             {"Name": "message__number", "Type": Integer},
             {"Name": "message", "Type": String},
         ],
-        "keys":[]
+        "keys": []
     },
 }
 
+
 def no_data(file):
     with open(file, 'r') as f:
-        header = f.readline()
-        if f.readline():
-            return False
-        else:
-            return True
+        _ = f.readline()
+        return not f.readline()
 
-def convert(sourcezip, conn_url, docobj):
 
-    variables = docobj.variables()
+def convert(sourcezip, conn_url=None, document=None):
 
+    if conn_url is None:
+        conn_url = "sqlite:///{}.db".format(os.path.splitext(sourcezip)[0])
     engine = create_engine(conn_url)
     metadata = MetaData()
 
     with TemporaryDirectory() as tempdir:
         with zipfile.ZipFile(sourcezip, 'r') as zip_ref:
             zip_ref.extractall(tempdir)
-        
+
+        with zipfile.ZipFile(tempdir + "/questionnaire/content.zip", 'r') as zip_ref:
+            zip_ref.extractall(tempdir)
+
+        local_document = tempdir + "/document.json"
+        if not os.path.exists(local_document):
+            local_document = document
+
+        cont = json.load(open(local_document, encoding="utf-8"))
+        q = Questionnaire(**cont)
+        variables = list(get_variables(q))
+
         for f in Path(tempdir).glob('*.tab'):
             tablename = f.name.replace(".tab", "")
             if tablename in TABLES:
@@ -175,14 +191,14 @@ def convert(sourcezip, conn_url, docobj):
                 keys = []
                 roster_ids = []
                 for var in columns:
-                    if "__id" in var:
+                    if "assignment__id" != var and "__id" in var:
                         keys.append(var)
                         if var != "interview__id":
                             roster_ids.append(var)
                 sc = create_schema(columns, variables, roster_ids)
                 TABLES[tablename] = {"schema": sc, "keys": keys}
             create_table(tablename, sc, keys, metadata)
-        
+
         metadata.drop_all(engine)
         metadata.create_all(engine)
 
@@ -193,23 +209,23 @@ def convert(sourcezip, conn_url, docobj):
             ins = metadata.tables[tablename].insert()
             with open(f, "r", encoding="utf-8-sig") as f:
                 rd = csv.DictReader(f, delimiter='\t')
-                pbar =tqdm(rd, unit=' rows')
+                pbar = tqdm(rd, unit=' rows')
                 pbar.set_description("Processing %s" % tablename)
-                engine.execute(ins,[fix_dtypes(row, TABLES[tablename]["schema"]) for row in pbar])
+                engine.execute(ins, [fix_dtypes(row, TABLES[tablename]["schema"]) for row in pbar])
+
 
 def process_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("sourcezip",
         help="path to exported zip file with tabular data")
-    parser.add_argument(
-        "document", help="json file containing questionnaire document")
-    parser.add_argument("conn_url",
+    parser.add_argument("--conn_url", required=False,
         help="connection string to the destination database")
+    parser.add_argument("--document", required=False,
+        help="questionnaire document in json format, ignored if sourcezip already contains it")
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = process_args()
 
-    with open(args.document, 'r', encoding="utf-8-sig") as f:
-        docobj = import_questionnaire_json(f.read())
-    convert(args.sourcezip, args.conn_url, docobj)
+    convert(args.sourcezip, args.conn_url, args.document)

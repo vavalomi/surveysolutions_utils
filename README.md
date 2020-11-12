@@ -5,7 +5,7 @@
 
 call it from the command line:
 ```shell
-python ./tabular_to_sql.py ./example_1_Tabular.zip  "sqlite:///example_1.db" ./quest.json
+python ./tabular_to_sql.py ./example_1_Tabular.zip
 ```
 
 or in your script:
@@ -18,5 +18,5 @@ tabular_to_sql.convert("example_1_Tabular.zip",  "sqlite:///example_1.db", "ques
 ## Download export file and generate SQL database
 
 ```shell
-python ./get_export.py 'https://demo.mysurvey.solutions' api_user pass1234
+python ./get_export.py --url 'https://demo.mysurvey.solutions' --username api_user --password pass1234
 ```
